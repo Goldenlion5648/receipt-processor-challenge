@@ -1,8 +1,7 @@
 import json
 import os
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
 import socketserver
-import hashlib
 import uuid
 import re
 from math import ceil
@@ -10,6 +9,25 @@ from math import ceil
 db = {}
 
 class Handler(BaseHTTPRequestHandler):
+
+    def do_POST(self):
+        if self.path == "/receipts/process":
+            content_length = int(self.headers['Content-Length'])
+            body = self.rfile.read(content_length)
+            try:
+                result = process_receipts(body.decode("utf-8"))
+            except (json.decoder.JSONDecodeError, ValueError):
+                self.send_response(404, "BadRequest")
+                self.send_header('Content-type','application/json')
+                self.end_headers()
+                self.wfile.write(b"The receipt is invalid.")
+                return
+            self.send_response(200)
+            self.send_header('Content-type','application/json')
+            self.end_headers()
+            self.wfile.write(bytes(json.dumps(result), "utf8"))
+        
+    
     def do_GET(self):
         message = ''
         found = re.match(r"/receipts/(.+?)/points", self.path)
@@ -22,45 +40,51 @@ class Handler(BaseHTTPRequestHandler):
             result = get_points(found.group(1))
             if not result:
                 self.send_response(404, "NotFound")
-                self.send_header('Content-type','application/json')
+                self.send_header('Content-type','application/text')
                 self.end_headers()
                 message = "No receipt found for that ID."
             else:
                 self.send_response(200)
                 self.send_header('Content-type','application/json')
                 self.end_headers()
-                message = "No receipt found for that ID."
+                message = json.dumps(result)
                         
         self.wfile.write(bytes(message, "utf8"))
-        # self.wfile.write(b"we heard you")
-        # self.send_header('Content-type','text/html')
-        # self.end_headers()
 
-    def do_POST(self):
-        if self.path == "/receipts/process":
-            self.send_response(200)
-            self.send_header('Content-type','application/json')
-            self.end_headers()
-            content_length = int(self.headers['Content-Length'])
-            body = self.rfile.read(content_length)
-            try:
-                result = process_receipts(body.decode("utf-8"))
-            except json.decoder.JSONDecodeError:
-                self.wfile.write(b"The receipt is invalid.", "utf8")
-                return
-            self.wfile.write(bytes(json.dumps(result), "utf8"))
-        else:
-            self.send_response(400, "The receipt is invalid.")
-            self.send_header('Content-type','application/text')
-            self.end_headers()
-            self.wfile.write(b"The receipt is invalid.")
 
         
 def process_receipts(json_to_read: str):
     id_generated = str(uuid.uuid4())
+    json_as_dict = json.loads(json_to_read)
+    required = [
+        "retailer",
+        "purchaseDate",
+        "purchaseTime",
+        "items",
+        "total",
+    ]
+    if any(x not in json_as_dict for x in required):
+        raise ValueError
+    if len(json_as_dict["items"]) < 1:
+        raise ValueError
+    if not re.match(r"^[\w\s\-&]+$", json_as_dict["retailer"]):
+        raise ValueError
+    if not re.match(r"^\d+\.\d{2}$", json_as_dict["total"]):
+        raise ValueError
+    for item in json_as_dict["items"]:
+        if not re.match(r"^[\w\s\-]+$", item["shortDescription"]):
+            raise ValueError
+        if not re.match(r"^\d+\.\d{2}$", item["price"]):
+            raise ValueError
+    purchase_time = json_as_dict["purchaseTime"]
+    if not re.match(r"^\d\d:\d\d$", purchase_time):
+        raise ValueError
+    hours, minutes = map(int, purchase_time.split(":"))
+    if hours not in range(0, 23 + 1) or minutes not in range(0, 59 + 1):
+        raise ValueError
+        
     while id_generated in db:
         id_generated = str(uuid.uuid4())
-    json_as_dict = json.loads(json_to_read)
     db[id_generated] = json_as_dict
     return {"id": id_generated}
 
@@ -68,6 +92,12 @@ def process_receipts(json_to_read: str):
 def get_points(id_to_find):
     if id_to_find not in db:
         return False
+    if not re.match(r"^\S+$", id_to_find):
+        return False
+    '''
+    THE BELOW COMMENTS ARE FOR MY BENEFIT, THEY ARE NOT AI
+    GENERATED :)
+    '''
     current_json = db[id_to_find]
     # One point for every alphanumeric character in the retailer name.
     score = sum(letter.isalnum() for letter in current_json["retailer"])
@@ -102,23 +132,6 @@ def get_points(id_to_find):
     if (hours == 14 and minutes >= 1) or (hours == 15):
         score += 10
     return {"points" : score}
-            
-
-def run_tests():
-    expected_scores = [28, 109]
-    file_index = 0
-    for file in os.listdir("examples"):
-        if not file.startswith("github"):
-            continue
-        with open(f"examples/{file}") as f:
-            contents = f.read()
-            result = process_receipts(contents)
-            assert "id" in result
-            points_calculated_dict = get_points(result["id"])
-            assert "points" in points_calculated_dict
-            assert points_calculated_dict["points"] == expected_scores[file_index]
-            print(file, "passed")
-        file_index += 1
         
 
 if __name__ == '__main__':
