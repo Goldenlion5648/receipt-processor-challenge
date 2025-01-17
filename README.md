@@ -1,3 +1,7 @@
+# Testing:
+
+read `how_to.md`
+
 # Receipt Processor
 
 Build a webservice that fulfils the documented API. The API is described below. A formal definition is provided 

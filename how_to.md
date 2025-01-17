@@ -11,7 +11,9 @@ with a json in your payload.
 You will get a response with an id, and that id can be used at
 ```http://localhost:8080/receipts/{response_id}/points```
 
-look in `test.py` to see examples of usage.
+You can run the following (outside of docker) to test the server
+
+`python test.py`
 
 For debugging:
 
